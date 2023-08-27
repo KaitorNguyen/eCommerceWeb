@@ -3,15 +3,16 @@ from rest_framework.decorators import action
 from rest_framework.views import Response
 from rest_framework.filters import OrderingFilter
 
-from .models import User, Category, Shop, Product, Tag, Comment, Review, Notification
+from .models import User, Category, Shop, Product, Tag, Comment, Review, Notification, Like
 from .serializers import (
     UserSerializer, ConfirmUserSerializer,
     CategorySerializer,
     ShopSerializer, ShopDetailSerializer,
-    ProductSerializer, ProductDetailSerializer, ProductUpdateNoTagSerializer,
+    ProductSerializer, ProductDetailSerializer, ProductUpdateNoTagSerializer, AuthorizedProductDetailSerializer,
     CommentSerializer, UpdateCommentSerializer,
     ReviewSerializer,
-    NotificationSerializer
+    NotificationSerializer,
+    LikeSerializer
 )
 from .paginators import ProductPaginator
 from .permis import IsSellerOrShopOwner, IsSuperAdminOrEmployee, ProductOwner, CommentOwner, ReviewOwner
@@ -27,6 +28,10 @@ class UserViewSet(viewsets.ViewSet, generics.CreateAPIView):
     def get_serializer_class(self):
         if self.action in ['list-confirm-register', 'confirm']:
             return ConfirmUserSerializer
+        elif self.action in ['shop']:
+            return ShopDetailSerializer
+        elif self.action in ['notifications']:
+            return NotificationSerializer
         return self.serializer_class
 
     def get_permissions(self):
@@ -108,9 +113,16 @@ class CategoryViewSet(viewsets.ViewSet, generics.ListAPIView):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
 
-class ShopViewSet(viewsets.ViewSet, generics.ListAPIView, generics.CreateAPIView, generics.UpdateAPIView, generics.DestroyAPIView):
+class ShopViewSet(viewsets.ViewSet, generics.ListAPIView, generics.RetrieveAPIView, generics.CreateAPIView, generics.UpdateAPIView, generics.DestroyAPIView):
     queryset = Shop.objects.filter(is_active=True)
     serializer_class = ShopSerializer
+
+    def get_serializer_class(self):
+        if self.action in ['retrieve']:
+            return ShopDetailSerializer
+        elif self.action in ['products']:
+            return ProductSerializer
+        return self.serializer_class
 
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
@@ -152,12 +164,12 @@ class ShopViewSet(viewsets.ViewSet, generics.ListAPIView, generics.CreateAPIView
         paginator = ProductPaginator()
         page = paginator.paginate_queryset(products, request)
 
-        data = {
-            'shop': ShopDetailSerializer(shop).data,
-            'products': ProductSerializer(page, many=True).data
-        }
+        # data = {
+        #     'shop': ShopDetailSerializer(shop).data,
+        #     'products': ProductSerializer(page, many=True).data
+        # }
 
-        return paginator.get_paginated_response(data)
+        return paginator.get_paginated_response(ProductSerializer(page, many=True).data)
 
 
 class ProductViewSet(viewsets.ViewSet, generics.ListAPIView, generics.CreateAPIView, generics.RetrieveAPIView, generics.UpdateAPIView, generics.DestroyAPIView):
@@ -170,16 +182,20 @@ class ProductViewSet(viewsets.ViewSet, generics.ListAPIView, generics.CreateAPIV
     ordering_fields = ['name', 'price']
 
     def get_serializer_class(self):
-        if self.action.__eq__('list'):
+        if self.request.user.is_authenticated:
+            return AuthorizedProductDetailSerializer
+        elif self.action.__eq__('list'):
             return ProductSerializer
         elif self.action.__eq__('update'):
             return ProductUpdateNoTagSerializer
+        elif self.action in ['comments']:
+            return CommentSerializer
         return self.serializer_class
 
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
             return [ProductOwner()]
-        elif self.action in ['comments', 'reviews'] and self.request.method == 'POST':
+        elif self.action in ['like', 'comments', 'reviews'] and self.request.method == 'POST':
             return [permissions.IsAuthenticated()]
         return [permissions.AllowAny()]
 
@@ -315,6 +331,15 @@ class ProductViewSet(viewsets.ViewSet, generics.ListAPIView, generics.CreateAPIV
         product.tags.clear()
         return Response(ProductDetailSerializer(product).data)
 
+    @action(methods=['post'], detail=True, url_path='like')
+    def like(self, request, pk):
+        l, created = Like.objects.get_or_create(product=self.get_object(), user=request.user)
+        if not created:
+            l.liked = not l.liked
+        l.save()
+
+        return Response(LikeSerializer(l).data)
+
     @action(methods=['post', 'get'], detail=True, url_path='comments')
     def comments(self, request, pk):
         product = self.get_object()
@@ -324,9 +349,12 @@ class ProductViewSet(viewsets.ViewSet, generics.ListAPIView, generics.CreateAPIV
             return Response(CommentSerializer(comments, many=True).data)
 
         if request.method.__eq__('POST'):
-            comment = Comment(content=request.data['content'], product=product, user=request.user)
-            comment.save()
-            return Response(CommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+            content = request.data['content']
+            if content:
+                comment = Comment(content=content, product=product, user=request.user)
+                comment.save()
+                return Response(CommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+            return Response({'error': 'Bạn cần phải nhập bình luận'}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(methods=['post', 'get'], detail=True, url_path='reviews')
     def reviews(self, request, pk):
@@ -337,16 +365,21 @@ class ProductViewSet(viewsets.ViewSet, generics.ListAPIView, generics.CreateAPIV
             return Response(ReviewSerializer(reviews, many=True).data)
 
         if request.method.__eq__('POST'):
-            review, _ = Review.objects.get_or_create(product=product, user=request.user)
-
-            rating = request.data['rate']
-            if int(rating) < 0 or int(rating) > 5:
+            rating = int(request.data['rate'])
+            if rating >= 0 and rating <=5:
+                try:
+                    rating = rating
+                    content = request.data['content']
+                except:
+                    return Response({'error': 'Bạn cần phải chọn rate và nhập nội dung'}, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    review, _ = Review.objects.get_or_create(product=product, user=request.user)
+                    review.rate = rating
+                    review.content = content
+                    review.save()
+                    return Response(ReviewSerializer(review).data, status=status.HTTP_201_CREATED)
+            else:
                 return Response({'error': 'Giá trị rate phải nằm trong khoảng từ 0 đến 5'}, status=status.HTTP_400_BAD_REQUEST)
-            review.rate = rating
-            review.content = request.data['content']
-            review.save()
-
-            return Response(ReviewSerializer(review).data, status=status.HTTP_201_CREATED)
 
 class CommentViewSet(viewsets.ViewSet, generics.UpdateAPIView, generics.DestroyAPIView, generics.RetrieveAPIView):
     queryset = Comment.objects.filter(is_active=True)
@@ -370,9 +403,12 @@ class CommentViewSet(viewsets.ViewSet, generics.UpdateAPIView, generics.DestroyA
     @action(methods=['post'], detail=True, url_path='reply-comment')
     def reply_comment(self, request, pk):
         reply_to = self.get_object()
-        comment = Comment(content=request.data['content'], product=reply_to.product, user=request.user, reply_to=reply_to)
-        comment.save()
-        return Response(CommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+        content = request.data['content']
+        if content:
+            comment = Comment(content=request.data['content'], product=reply_to.product, user=request.user, reply_to=reply_to)
+            comment.save()
+            return Response(CommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+        return Response({'error': 'Bạn cần phải nhập bình luận'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class ReviewViewSet(viewsets.ViewSet, generics.ListAPIView):

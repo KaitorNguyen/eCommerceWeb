@@ -59,6 +59,12 @@ class ActionBase(BaseModel):
     class Meta:
         abstract = True
 
+class Like(ActionBase):
+    liked = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = ('product', 'user')
+
 class Review(ActionBase):
     rate = models.SmallIntegerField(default=0)
     content = models.CharField(max_length=255, null=True, blank=True)

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Category, Shop, Product, Tag, Comment, Review, Notification
+from .models import User, Category, Shop, Product, Tag, Comment, Review, Notification, Like
 from django.db.models import Avg, Q
 
 
@@ -136,3 +136,27 @@ class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = '__all__'
+
+class LikeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Like
+        fields = ['id', 'liked', 'created_date']
+
+class AuthorizedProductDetailSerializer(ProductDetailSerializer):
+    liked = serializers.SerializerMethodField()
+    auth_review = serializers.SerializerMethodField()
+
+    def get_liked(self, product):
+        request = self.context.get('request')
+        if request:
+            return product.like_set.filter(user=request.user, liked=True).exists()
+
+    def get_auth_review(self, product):
+        request = self.context.get('request')
+        if request:
+            r = product.review_set.filter(user=request.user).first()
+            return ReviewSerializer(r).data
+
+    class Meta:
+        model = ProductDetailSerializer.Meta.model
+        fields = ProductDetailSerializer.Meta.fields + ['liked', 'auth_review']
