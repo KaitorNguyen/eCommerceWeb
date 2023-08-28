@@ -35,6 +35,7 @@ schema_view = get_schema_view(
 
 urlpatterns = [
     path('', include('shops.urls')),
+    path('', include('orders.urls')),
     path('admin/', admin.site.urls),
     re_path(r'^ckeditor/', include('ckeditor_uploader.urls')),
     re_path(r'^swagger(?P<format>\.json|\.yaml)$',
