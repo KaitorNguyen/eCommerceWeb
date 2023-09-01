@@ -1,3 +1,5 @@
+import json
+
 from rest_framework import viewsets, generics, permissions, status
 from rest_framework.decorators import action
 from rest_framework.views import Response
@@ -12,9 +14,10 @@ from .serializers import (
     CommentSerializer, UpdateCommentSerializer,
     ReviewSerializer,
     NotificationSerializer,
-    LikeSerializer
+    LikeSerializer,
+    ChangePasswordSerializer
 )
-from .paginators import ProductPaginator
+from .paginators import ProductPaginator, ProductShopPaginator
 from .permis import IsSellerOrShopOwner, IsSuperAdminOrEmployee, ProductOwner, CommentOwner, ReviewOwner
 from django.db import IntegrityError
 from rest_framework.exceptions import ValidationError
@@ -55,15 +58,19 @@ class UserViewSet(viewsets.ViewSet, generics.CreateAPIView):
     @action(methods=['post'], detail=False, url_path='change-password')
     def change_password(self, request):
         u = request.user
+        serializer = ChangePasswordSerializer(data=request.data)
         try:
-            old_password = request.POST.get('old_password')
-            new_password = request.POST.get('new_password')
-            if u.check_password(old_password):
-                u.set_password(new_password)
-                u.save()
-                return Response({'message': 'Mật khẩu đã thay đổi thành công.'}, status=status.HTTP_200_OK)
-            else:
-                return Response({'message': 'Mật khẩu cũ không đúng!!!'}, status=status.HTTP_400_BAD_REQUEST)
+            if serializer.is_valid():
+                old_password = serializer.validated_data['old_password']
+                new_password = serializer.validated_data['new_password']
+                if not u.check_password(old_password):
+                    return Response({'message': 'Mật khẩu cũ không đúng!'}, status=status.HTTP_400_BAD_REQUEST)
+                elif old_password == new_password:
+                    return Response({'message': 'Mật khẩu mới bị trùng với mật khẩu cũ'}, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    u.set_password(new_password)
+                    u.save()
+                    return Response({'message': 'Mật khẩu đã thay đổi thành công.'}, status=status.HTTP_200_OK)
         except:
             return Response(status=status.HTTP_400_BAD_REQUEST)
 
@@ -98,12 +105,12 @@ class UserViewSet(viewsets.ViewSet, generics.CreateAPIView):
             shop = Shop.objects.filter(user=request.user).get()
             products = shop.product_set.filter(is_active=True)
 
-            paginator = ProductPaginator()
+            paginator = ProductShopPaginator()
             page = paginator.paginate_queryset(products, request)
 
             data = {
                 'shop': ShopDetailSerializer(shop).data,
-                'products': ProductSerializer(page, many=True).data
+                'products': ProductDetailSerializer(page, many=True).data
             }
 
             return paginator.get_paginated_response(data)
@@ -193,7 +200,7 @@ class ProductViewSet(viewsets.ViewSet, generics.ListAPIView, generics.CreateAPIV
         return self.serializer_class
 
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'updated_tags']:
             return [ProductOwner()]
         elif self.action in ['like', 'comments', 'reviews'] and self.request.method == 'POST':
             return [permissions.IsAuthenticated()]
@@ -229,7 +236,7 @@ class ProductViewSet(viewsets.ViewSet, generics.ListAPIView, generics.CreateAPIV
 
     def create(self, request, *args, **kwargs):
         data = request.data
-        tags = data['tags']
+        tags = json.loads(data['tags'])
         try:
             category = Category.objects.get(id=data['category'])
             shop = Shop.objects.filter(user=request.user).first()
@@ -244,8 +251,8 @@ class ProductViewSet(viewsets.ViewSet, generics.ListAPIView, generics.CreateAPIV
             product.save()
         except IntegrityError:
             return Response({'error': 'Sản phẩm đã tồn tại trong cửa hàng.'}, status=status.HTTP_400_BAD_REQUEST)
-        except ValidationError as e:
-            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+        except:
+            return Response({'error': 'Bạn cần phải nhập đầy đủ thông tin'}, status=status.HTTP_400_BAD_REQUEST)
 
         for t in tags:
             tag, _ = Tag.objects.get_or_create(name=t)
@@ -256,11 +263,17 @@ class ProductViewSet(viewsets.ViewSet, generics.ListAPIView, generics.CreateAPIV
 
     def partial_update(self, request, *args, **kwargs):
         product = self.get_object()
-        for k, v in request.data.items():
-            if k == 'category':
-                product.category_id = int(v)
-            setattr(product, k, v)
-        product.save()
+        try:
+            for k, v in request.data.items():
+                if k == 'category':
+                    # product.category_id = int(v)
+                    v = Category.objects.get(id=v)
+                setattr(product, k, v)
+            product.save()
+        except IntegrityError:
+            return Response({'error': 'Sản phẩm đã tồn tại trong cửa hàng.'}, status=status.HTTP_400_BAD_REQUEST)
+        except:
+            return Response({'error': 'Cập nhật sản phẩm không thành công.'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(ProductUpdateNoTagSerializer(product).data)
 
     @action(methods=['get'], detail=True, url_path='related-products')
@@ -301,35 +314,49 @@ class ProductViewSet(viewsets.ViewSet, generics.ListAPIView, generics.CreateAPIV
             }
             return Response(data)
 
-    @action(methods=['post'], detail=True, url_path='assign-tags')
-    def assign_tags(self, request, pk):
-        product = self.get_object()
-        tags = request.data['tags']
-
-        for t in tags:
-            tag, _ = Tag.objects.get_or_create(name=t)
-            product.tags.add(tag)
-        product.save()
-
-        return Response(ProductDetailSerializer(product).data)
-
-    @action(methods=['put'], detail=True, url_path='remove-tags')
-    def remove_tag(self, request, pk):
-        product = self.get_object()
-        try:
-            tag = request.data['tags']
-            tag_name = Tag.objects.get(name=tag)
-        except:
-            return Response({'error': 'Trong sản phẩm không có tag'}, status=status.HTTP_400_BAD_REQUEST)
-        product.tags.remove(tag_name)
-
-        return Response(ProductDetailSerializer(product).data)
-
-    @action(methods=['put'], detail=True, url_path='remove-all-tags')
-    def remove_tags(self, request, pk):
+    @action(methods=['put'], detail=True, url_path='updated-tags')
+    def updated_tags(self, request, pk):
         product = self.get_object()
         product.tags.clear()
+        try:
+            tags = request.data['tags']
+            for t in tags:
+                tag, _ = Tag.objects.get_or_create(name=t)
+                product.tags.add(tag)
+            product.save()
+        except:
+            return Response({'error': 'Trong sản phẩm không có tag'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(ProductDetailSerializer(product).data)
+
+    # @action(methods=['post'], detail=True, url_path='assign-tags')
+    # def assign_tags(self, request, pk):
+    #     product = self.get_object()
+    #     tags = request.data['tags']
+    #
+    #     for t in tags:
+    #         tag, _ = Tag.objects.get_or_create(name=t)
+    #         product.tags.add(tag)
+    #     product.save()
+    #
+    #     return Response(ProductDetailSerializer(product).data)
+
+    # @action(methods=['put'], detail=True, url_path='remove-tags')
+    # def remove_tag(self, request, pk):
+    #     product = self.get_object()
+    #     try:
+    #         tag = request.data['tags']
+    #         tag_name = Tag.objects.get(name=tag)
+    #     except:
+    #         return Response({'error': 'Trong sản phẩm không có tag'}, status=status.HTTP_400_BAD_REQUEST)
+    #     product.tags.remove(tag_name)
+    #
+    #     return Response(ProductDetailSerializer(product).data)
+
+    # @action(methods=['put'], detail=True, url_path='remove-all-tags')
+    # def remove_tags(self, request, pk):
+    #     product = self.get_object()
+    #     product.tags.clear()
+    #     return Response(ProductDetailSerializer(product).data)
 
     @action(methods=['post'], detail=True, url_path='like')
     def like(self, request, pk):

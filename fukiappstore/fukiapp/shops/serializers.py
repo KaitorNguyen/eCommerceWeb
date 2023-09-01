@@ -2,6 +2,9 @@ from rest_framework import serializers
 from .models import User, Category, Shop, Product, Tag, Comment, Review, Notification, Like
 from django.db.models import Avg, Q
 
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(max_length=128)
+    new_password = serializers.CharField(max_length=128)
 
 class UserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
@@ -16,8 +19,13 @@ class UserSerializer(serializers.ModelSerializer):
         u.set_password(u.password)
         u.save()
 
+        userAdmin = User.objects.filter(is_staff=True).first()
         if u.role == 'Seller':
             recipients = User.objects.filter(Q(is_staff=True) | Q(role='Employee')).all()
+            notice = Notification(sender=userAdmin.id,
+                                  content="Bạn vừa mới đăng kí trở thành nhà bán hàng - {}! Vui lòng chờ xác nhận".format(u.username),
+                                  recipient=u)
+            notice.save()
             for recipient in recipients:
                 notice = Notification(sender=u.id, content="Đăng kí trở thành nhà bán hàng - {}".format(u.username),
                                       recipient=recipient)
@@ -85,7 +93,7 @@ class ProductDetailSerializer(ProductSerializer):
 
     class Meta:
         model = ProductSerializer.Meta.model
-        fields = ProductSerializer.Meta.fields + ['description', 'shop', 'category', 'tags', 'avg_rate', 'total_review', 'total_comment']
+        fields = ProductSerializer.Meta.fields + ['description', 'shop', 'category', 'tags', 'avg_rate', 'total_review', 'total_comment', 'created_date', 'updated_date']
         extra_kwargs = {
             'avg_rate': {'read_only': True},
             'total_review': {'read_only': True},
@@ -98,7 +106,7 @@ class ProductUpdateNoTagSerializer(ProductSerializer):
 
     class Meta:
         model = ProductSerializer.Meta.model
-        fields = ProductSerializer.Meta.fields + ['description', 'shop', 'category']
+        fields = ProductSerializer.Meta.fields + ['description', 'shop', 'category', 'is_active']
 
 class ReviewSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
