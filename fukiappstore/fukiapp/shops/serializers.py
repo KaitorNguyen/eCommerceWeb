@@ -6,7 +6,12 @@ class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(max_length=128)
     new_password = serializers.CharField(max_length=128)
 
+class ShopBaseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Shop
+        fields = ['id', 'name']
 class UserSerializer(serializers.ModelSerializer):
+    shop = ShopBaseSerializer(read_only=True)
     def create(self, validated_data):
         data = validated_data.copy()
         # {'first_name':'abc'}
@@ -34,9 +39,10 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'password', 'first_name', 'last_name', 'email', 'avatar', 'role']
+        fields = ['id', 'username', 'password', 'first_name', 'last_name', 'email', 'avatar', 'role', 'is_verified', 'shop']
         extra_kwargs = {
-            'password': {'write_only': True}
+            'password': {'write_only': True},
+            'is_verified': {'read_only': True}
         }
 
 class ConfirmUserSerializer(serializers.ModelSerializer):

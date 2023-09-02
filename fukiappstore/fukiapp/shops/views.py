@@ -143,7 +143,8 @@ class ShopViewSet(viewsets.ViewSet, generics.ListAPIView, generics.RetrieveAPIVi
         if checkshop:
             return Response({'error': 'Bạn đã sở hữu cửa hàng rồi'}, status=status.HTTP_400_BAD_REQUEST)
         else:
-            avatar = data['avatar']
+            # avatar = data['avatar']
+            avatar = request.FILES.get('avatar', None)
             if not avatar:
                 avatar = "/default/local-store_kj6ybp.png"
             if user.is_verified:
