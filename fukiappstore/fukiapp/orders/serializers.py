@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.db.models import Sum
 from .models import PaymentMethod, Order, OrderDetail
 import shops
 
@@ -21,11 +22,10 @@ class OrderBaseSerializer(serializers.ModelSerializer):
     payment_method = PaymentMethodSerializer()
     class Meta:
         model = Order
-        fields = ['id', 'name', 'payment_method', 'status']
+        fields = ['id', 'name', 'receiver_name', 'receiver_phone', 'receiver_address', 'total_price', 'payment_method', 'status']
 
 class OrderDetailSerializer(OrderBaseSerializer):
     order_details = OrderItemDetailSerializer(many=True, read_only=True)
     class Meta:
         model = OrderBaseSerializer.Meta.model
-        fields = OrderBaseSerializer.Meta.fields + ['receiver_name', 'receiver_phone', 'receiver_address',
-                                                    'total_price', 'order_details']
+        fields = OrderBaseSerializer.Meta.fields + ['total_price', 'order_details']

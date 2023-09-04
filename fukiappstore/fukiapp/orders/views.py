@@ -1,6 +1,7 @@
 from rest_framework import viewsets, generics, status, permissions
 from rest_framework.decorators import action, api_view
-from rest_framework.views import Response
+from rest_framework.views import Response, APIView
+from django.db.models import Sum, Count, F, Q
 from .models import Order, OrderDetail, PaymentMethod
 import shops
 from .serializers import (
@@ -8,6 +9,8 @@ from .serializers import (
     OrderDetailSerializer
 )
 import random
+from datetime import datetime
+from .permis import IsSellerOrShopOwner
 
 # Create your views here.
 class PaymentMethodViewSet(viewsets.ViewSet, generics.ListAPIView):
@@ -56,4 +59,182 @@ class OrderViewSet(viewsets.ViewSet, generics.CreateAPIView, generics.RetrieveAP
             return Response({'error': 'Bạn không có sản phẩm nào tồn tại trong giỏ hàng!!!'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderDetailSerializer(order).data, status.HTTP_201_CREATED)
 
+# Thống kê doanh thu từng danh mục và sản phẩm của cửa hàng theo tháng, quý, năm
+class RevenueStatsMonth(APIView):
+    permission_classes = [IsSellerOrShopOwner()]
 
+    def post(self, request):
+        try:
+            current_year = datetime.now().year
+            month_str = int(request.data.get('month'))
+            year_str = request.data.get('year')
+
+            if not year_str:
+                year = datetime.now().year
+            elif int(year_str) > int(current_year):
+                return Response({'error': ('Bạn vui lòng nhập từ năm {} trở về trước').format(current_year)}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                year = year_str
+
+            if (month_str >= 1 and month_str <= 12):
+                month = month_str
+            else:
+                return Response({'error': 'Nhập sai tháng'}, status=status.HTTP_400_BAD_REQUEST)
+        except:
+            return Response({'error': "Invalid month format. Please use 'MM' format."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Lấy các sản phẩm của cửa hàng người bán
+        shop = shops.models.Shop.objects.get(user=request.user)
+        products = shops.models.Product.objects.filter(shop=shop).all()
+
+        total_revenue = 0
+
+        # Doanh thu các sản phẩm
+        revenue_products = []
+        for product in products:
+            product_order = OrderDetail.objects.filter(product=product, created_date__month=month, created_date__year=year).all()
+            quantity_sold = product_order.aggregate(Sum('quantity'))['quantity__sum']
+
+            item = {
+                'id': product.id,
+                'name': product.name,
+                'price': product.price,
+                'quantity_sold': quantity_sold if quantity_sold else 0,
+                'revenue_sold': quantity_sold * product.price if quantity_sold else 0,
+                'month': '{} - {}'.format(month, year)
+            }
+            revenue_products.append(item)
+
+            # Doanh thu của cửa hàng
+            total_revenue += quantity_sold * product.price if quantity_sold else 0
+
+        # Doanh thu của các danh mục loại sản phẩm
+        categories = shops.models.Category.objects.filter(products__shop=shop)\
+            .annotate(total_revenue_cate=Sum(F('products__orderdetail__unit_price') * F('products__orderdetail__quantity'),
+                                        filter=Q(products__orderdetail__order__created_date__month=month) & Q(products__orderdetail__order__created_date__year=year)))\
+            .values('id', 'name', 'total_revenue_cate')
+        revenue_category = [categories]
+
+        data = {
+            "shop_name": shop.name,
+            "total_revenue": total_revenue,
+            "revenue_category": revenue_category,
+            "revenue_products": revenue_products
+        }
+        return Response(data, status=status.HTTP_200_OK)
+
+class RevenueStatsQuarter(APIView):
+    permission_classes = [IsSellerOrShopOwner()]
+
+    def post(self, request):
+        try:
+            quarter = int(request.data.get('quarter'))
+            current_year = datetime.now().year
+            year_str = int(request.data.get('year'))
+
+            if not year_str:
+                year = datetime.now().year
+            elif int(year_str) > int(current_year):
+                return Response({'error': ('Bạn vui lòng nhập từ năm {} trở về trước').format(current_year)}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                year = year_str
+        except:
+            return Response({'error': "Invalid year or quarter format. Please use 'YYYY' format for year and '1', '2', '3', or '4' for quarter."}, status= status.HTTP_400_BAD_REQUEST)
+
+        # Lấy các sản phẩm của cửa hàng người bán
+        shop = shops.models.Shop.objects.get(user=request.user)
+        products = shops.models.Product.objects.filter(shop=shop).all()
+
+        total_revenue = 0
+
+        # Doanh thu các sản phẩm
+        revenue_products = []
+        for product in products:
+            product_order = OrderDetail.objects.filter(product=product, created_date__year=year, created_date__month__in=[(quarter-1)*3 + 1, (quarter-1)*3 + 2, (quarter-1)*3 + 3]).all()
+            quantity_sold = product_order.aggregate(Sum('quantity'))['quantity__sum']
+
+            item = {
+                'id': product.id,
+                'name': product.name,
+                'price': product.price,
+                'quantity_sold': quantity_sold if quantity_sold else 0,
+                'revenue_sold': quantity_sold * product.price if quantity_sold else 0,
+                'year': year,
+                'quarter': quarter
+            }
+            revenue_products.append(item)
+
+            # Doanh thu của cửa hàng
+            total_revenue += quantity_sold * product.price if quantity_sold else 0
+
+        # Doanh thu của các danh mục loại sản phẩm
+        categories = shops.models.Category.objects.filter(products__shop=shop)\
+            .annotate(total_revenue=Sum(F('products__orderdetail__unit_price') * F('products__orderdetail__quantity'),
+                                        filter=Q(products__created_date__year=year)&Q(products__created_date__month__in=[(quarter-1)*3 + 1,(quarter-1)*3 + 2, (quarter-1)*3 + 3])))\
+            .values('id', 'name', 'total_revenue')
+        revenue_category = [categories]
+
+        data = {
+            "shop_name": shop.name,
+            "total_revenue": total_revenue,
+            "revenue_category": revenue_category,
+            "revenue_products": revenue_products
+        }
+        return Response(data, status=status.HTTP_200_OK)
+
+class RevenueStatsYear(APIView):
+    permission_classes = [IsSellerOrShopOwner()]
+
+    def post(self, request):
+        try:
+            current_year = datetime.now().year
+            year_str = int(request.data.get('year'))
+
+            if not year_str:
+                year = datetime.now().year
+            elif int(year_str) > int(current_year):
+                return Response({'error': ('Bạn vui lòng nhập từ năm {} trở về trước').format(current_year)}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                year = year_str
+        except:
+            return Response({'error': "Invalid year. Please use 'YYYY' format for year."}, status= status.HTTP_400_BAD_REQUEST)
+
+        # Lấy các sản phẩm của cửa hàng người bán
+        shop = shops.models.Shop.objects.get(user=request.user)
+        products = shops.models.Product.objects.filter(shop=shop).all()
+
+        total_revenue = 0
+
+        # Doanh thu các sản phẩm
+        revenue_products = []
+        for product in products:
+            product_order = OrderDetail.objects.filter(product=product, created_date__year=year).all()
+            quantity_sold = product_order.aggregate(Sum('quantity'))['quantity__sum']
+
+            item = {
+                'id': product.id,
+                'name': product.name,
+                'price': product.price,
+                'quantity_sold': quantity_sold if quantity_sold else 0,
+                'revenue_sold': quantity_sold * product.price if quantity_sold else 0,
+                'year': year
+            }
+            revenue_products.append(item)
+
+            # Doanh thu của cửa hàng
+            total_revenue += quantity_sold * product.price if quantity_sold else 0
+
+        # Doanh thu của các danh mục loại sản phẩm
+        categories = shops.models.Category.objects.filter(products__shop=shop)\
+            .annotate(total_revenue=Sum(F('products__orderdetail__unit_price') * F('products__orderdetail__quantity'),
+                                        filter=Q(products__created_date__year=year)))\
+            .values('id', 'name', 'total_revenue')
+        revenue_category = [categories]
+
+        data = {
+            "shop_name": shop.name,
+            "total_revenue": total_revenue,
+            "revenue_category": revenue_category,
+            "revenue_products": revenue_products
+        }
+        return Response(data, status=status.HTTP_200_OK)

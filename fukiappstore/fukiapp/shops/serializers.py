@@ -174,3 +174,10 @@ class AuthorizedProductDetailSerializer(ProductDetailSerializer):
     class Meta:
         model = ProductDetailSerializer.Meta.model
         fields = ProductDetailSerializer.Meta.fields + ['liked', 'auth_review']
+
+class WishListProductSerializer(LikeSerializer):
+    product = ProductSerializer(read_only=True)
+    user = UserSerializer(read_only=True)
+    class Meta:
+        model = LikeSerializer.Meta.model
+        fields = LikeSerializer.Meta.fields + ['product', 'user']

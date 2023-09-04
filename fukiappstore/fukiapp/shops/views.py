@@ -15,13 +15,14 @@ from .serializers import (
     ReviewSerializer,
     NotificationSerializer,
     LikeSerializer,
-    ChangePasswordSerializer
+    ChangePasswordSerializer, WishListProductSerializer
 )
 from .paginators import ProductPaginator, ProductShopPaginator
 from .permis import IsSellerOrShopOwner, IsSuperAdminOrEmployee, ProductOwner, CommentOwner, ReviewOwner
 from django.db import IntegrityError
 from rest_framework.exceptions import ValidationError
 from django.db.models import Q
+import orders
 # Create your views here.
 
 class UserViewSet(viewsets.ViewSet, generics.CreateAPIView):
@@ -38,7 +39,7 @@ class UserViewSet(viewsets.ViewSet, generics.CreateAPIView):
         return self.serializer_class
 
     def get_permissions(self):
-        if self.action in ['current-user', 'change_password', 'notifications']:
+        if self.action in ['current-user', 'change_password', 'notifications', 'wishlist']:
             return [permissions.IsAuthenticated()]
         elif self.action in ['list_confirm_register', 'confirm']:
             return [IsSuperAdminOrEmployee()]
@@ -116,6 +117,25 @@ class UserViewSet(viewsets.ViewSet, generics.CreateAPIView):
             return paginator.get_paginated_response(data)
         except:
             return Response(status=status.HTTP_400_BAD_REQUEST)
+
+    @action(methods=['get'], detail=False, url_path='wish-list')
+    def wishlist(self, request):
+        user = request.user
+        likeproduct = Like.objects.filter(user=user, liked=True)
+        return Response(WishListProductSerializer(likeproduct, many=True).data)
+
+    @action(methods=['get'], detail=False, url_path='orders')
+    def orders(self, request):
+        user = request.user
+        if user:
+            try:
+                order = orders.models.Order.objects.filter(user=user)
+                return Response(orders.serializers.OrderBaseSerializer(order, many=True).data)
+            except:
+                return Response({'error': 'Hệ thống đang bảo trì'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({'error': 'Bạn cần phải đăng nhập!!!'}, status=status.HTTP_400_BAD_REQUEST)
+
 class CategoryViewSet(viewsets.ViewSet, generics.ListAPIView):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
