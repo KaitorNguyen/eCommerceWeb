@@ -129,7 +129,10 @@ class UserViewSet(viewsets.ViewSet, generics.CreateAPIView):
         user = request.user
         if user:
             try:
-                order = orders.models.Order.objects.filter(user=user)
+                if user.is_superuser or user.role == 'Employee':
+                    order = orders.models.Order.objects.all()
+                else:
+                    order = orders.models.Order.objects.filter(user=user)
                 return Response(orders.serializers.OrderBaseSerializer(order, many=True).data)
             except:
                 return Response({'error': 'Hệ thống đang bảo trì'}, status=status.HTTP_400_BAD_REQUEST)
