@@ -163,9 +163,6 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CLIENT_ID = 'dOpYblCChifIEB47b9RvjwZMhHWoNPKYjuy8z3gO'
-CLIENT_SECRET = 'w1MJRLnuePGEanPq45KzQysE0odalmdS3aEAv5TaO2uDQb6FIHYbimvklQWdfZdKhVyItJvNz1E19RRsvWVCHrDNvHJc4CAYpA5v2tiih6KrT2sImiJTU0QvL5vTIpiI'
-
 OAUTH2_PROVIDER = {
     'OAUTH2_BACKEND_CLASS': 'oauth2_provider.oauth2_backends.JSONOAuthLibCore'
 }

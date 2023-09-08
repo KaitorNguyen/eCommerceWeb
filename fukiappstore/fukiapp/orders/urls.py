@@ -10,5 +10,6 @@ urlpatterns = [
     path('', include(router.urls)),
     path('revenue-stats-month/', views.RevenueStatsMonth.as_view(), name='revenue-stats-month'),
     path('revenue-stats-quarter/', views.RevenueStatsQuarter.as_view(), name='revenue-stats-quarter'),
-    path('revenue-stats-year/', views.RevenueStatsYear.as_view(), name='revenue-stats-quarter')
+    path('revenue-stats-year/', views.RevenueStatsYear.as_view(), name='revenue-stats-quarter'),
+    path('payment/', views.PaymentView.as_view(), name='payment')
 ]

@@ -11,6 +11,13 @@ from .serializers import (
 import random
 from datetime import datetime
 from .permis import IsSellerOrShopOwner
+import json
+import urllib.request
+import urllib
+import uuid
+import requests
+import hmac
+import hashlib
 
 # Create your views here.
 class PaymentMethodViewSet(viewsets.ViewSet, generics.ListAPIView):
@@ -24,6 +31,11 @@ class OrderViewSet(viewsets.ViewSet, generics.CreateAPIView, generics.RetrieveAP
     def create(self, request, *args, **kwargs):
         user = request.user
         try:
+            name_order = request.data.get('name_order')
+            if name_order:
+                name = name_order
+            else:
+                name = 'HD{}'.format(random.randint(100000, 900000))
             receiver_name = request.data.get('receiver_name')
             receiver_phone = request.data.get('receiver_phone')
             receiver_address = request.data.get('receiver_address')
@@ -34,7 +46,7 @@ class OrderViewSet(viewsets.ViewSet, generics.CreateAPIView, generics.RetrieveAP
             return Response({'error': 'Bạn cần phải điền đầy đủ thông tin'}, status=status.HTTP_400_BAD_REQUEST)
 
         order = Order.objects.create(
-            name='HD{}'.format(random.randint(100000, 900000)),
+            name=name,
             receiver_name=receiver_name,
             receiver_phone=receiver_phone,
             receiver_address=receiver_address,
@@ -280,3 +292,89 @@ class RevenueStatsYear(APIView):
             "revenue_best_products": revenue_best_products
         }
         return Response(data, status=status.HTTP_200_OK)
+
+class PaymentView(APIView):
+    # permission_classes = [permissions.IsAuthenticated()]
+    def post(self, request):
+        # Lấy dữ liệu từ request của client
+        data_amount = request.data['amount']
+        order_info = request.data['order_info']
+        data_redirectUrl = request.data['redirectUrl']
+        data_ipnUrl = request.data['ipnUrl']
+        extra_data = request.data['extraData']
+
+        # parameters send to MoMo get get payUrl
+        endpoint = "https://test-payment.momo.vn/v2/gateway/api/create"
+        partnerCode = "MOMO"
+        accessKey = "F8BBA842ECF85"
+        secretKey = "K951B6PE1waDMi640xX08PD3vg6EkVlz"
+        orderInfo = "Payment for order {}".format(order_info)
+        redirectUrl = data_redirectUrl
+        ipnUrl = data_ipnUrl
+        amount = data_amount
+        orderId = partnerCode + str(random.randint(100000, 900000))
+        requestId = orderId
+        requestType = "captureWallet"
+        extraData = json.dumps(extra_data) # pass empty value or Encode base64 JsonString
+
+        # before sign HMAC SHA256 with format: accessKey=$accessKey&amount=$amount&extraData=$extraData&ipnUrl=$ipnUrl
+        # &orderId=$orderId&orderInfo=$orderInfo&partnerCode=$partnerCode&redirectUrl=$redirectUrl&requestId=$requestId
+        # &requestType=$requestType
+        rawSignature = "accessKey=" + accessKey + \
+                       "&amount=" + amount + \
+                       "&extraData=" + extraData + \
+                       "&ipnUrl=" + ipnUrl + \
+                       "&orderId=" + orderId + \
+                       "&orderInfo=" + orderInfo + \
+                       "&partnerCode=" + partnerCode + \
+                       "&redirectUrl=" + redirectUrl + \
+                       "&requestId=" + requestId + \
+                       "&requestType=" + requestType
+
+        # puts raw signature
+        print("--------------------RAW SIGNATURE----------------")
+        print(rawSignature)
+
+        # signature
+        h = hmac.new(bytes(secretKey, 'ascii'), bytes(rawSignature, 'ascii'), hashlib.sha256)
+        signature = h.hexdigest()
+        print("--------------------SIGNATURE----------------")
+        print(signature)
+
+        # json object send to MoMo endpoint
+
+        data = {
+            'partnerCode': partnerCode,
+            'partnerName': "Test",
+            'storeId': "MomoTestStore",
+            'requestId': requestId,
+            'amount': amount,
+            'orderId': orderId,
+            'orderInfo': orderInfo,
+            'redirectUrl': redirectUrl,
+            'ipnUrl': ipnUrl,
+            'lang': "vi",
+            'extraData': extraData,
+            'requestType': requestType,
+            'signature': signature
+        }
+        print("--------------------JSON REQUEST----------------\n")
+        data = json.dumps(data)
+        print(data)
+
+        clen = len(data)
+        response = requests.post(endpoint, data=data,
+                                 headers={'Content-Type': 'application/json', 'Content-Length': str(clen)})
+        response_data = response.json()
+
+        # f.close()
+        print("--------------------JSON response----------------\n")
+        print(response_data)
+
+        # Kiểm tra phản hồi từ Momo và trả về URL thanh toán
+        pay_url = response_data['payUrl']
+        if pay_url:
+            print(response_data['payUrl'])
+            return Response({'pay_url': pay_url, 'message': response_data['message'], 'orderId': response_data['orderId']})
+        else:
+            return Response({'error_message': response_data['message']}, status=400)
